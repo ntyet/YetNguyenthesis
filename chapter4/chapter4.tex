@@ -1,0 +1,345 @@
+\chapter{RNA-SEQ ANALYSIS FOR REPEATED-MEASURES DATA}\label{chapter4}
+ \paperinfo{in preparation} % only include if paper has been submitted
+\paperauthor{Yet Nguyen and Dan Nettleton}    % only include if paper has been submitted
+
+\section*{Abstract}
+With the reduction in price of next generation sequencing technologies, gene expression profiling using RNA-seq has increased the scope of sequencing experiments to include more complex designs, such as repeated-measures.  In such designs, RNA samples are extracted from each experimental unit at multiple time points.  The read counts that result from RNA sequencing of the samples extracted from the same experimental unit tend to be temporally correlated.  Although there are many methods for RNA-seq differential expression analysis, existing methods do not properly account for within-unit correlations that arise in repeated-measures designs. We address this shortcoming by using normalized log-counts and associated precision weights in a general linear model pipeline with continuous autoregressive structure to account for the correlation among observations within each experimental unit. We then utilize parametric bootstrap to conduct differential expression inference. Simulation studies show the advantages of our method over alternatives that do not account for the correlation among observations within experimental units. 
+
+\section{Introduction \label{RMintro}}
+
+One of the goals of transcriptomics data  analysis is to identify genes whose mean transcript abundance levels differ across the levels of one or more categorical factors of interest. Such genes are typically referred to as differentially expressed (DE). Genes that are not DE are referred to as equivalently expressed (EE). Over the past decade, RNA sequencing (RNA-seq)  technologies  have emerged as a powerful and increasingly popular tool for expression profiling and differential expression analysis \citep{oshlack2010}. In a typical RNA-seq experiment, messenger  RNA is extracted from each biological sample of interest. RNA sample is converted to complementary DNA (cDNA) which in turn is sequenced with high-throughput sequencing technology. This process generates millions of short reads from one or both ends of cDNA fragments. These  short reads are mapped to the reference genome and the number of mapped short reads for a gene  represents a measurement of the transcript abundance level of that gene in a given sample. 
+
+With the decreasing in price  and increasing use of next generation sequencing technologies, RNA-seq experimental designs have become more complex. As a motivating example, we consider an RNA-seq experiment conducted on eight pigs, four from a high residual feed intake line (HRFI) and  four from a low residual feed intake line (LRFI). Researchers wanted to evaluate how pigs from different lines respond to a treatment designed to stimulate the immune system, and how the responses change over time at the molecular genetic level. They used RNA-seq technology to measure transcript abundances in blood samples from each pig at four times after treatment: 0, 2, 6, and 24 hours. The experiment is explained in greater detail in Section~\ref{RMdataanalysis} of this paper. A  statistical model for these data should consider the within-unit correlation  expected due to repeated measurements on each pig. 
+
+Many general purpose  RNA-seq differential expression analysis methods have been developed,  such as edgeR \citep{Robinson2010a}, QuasiSeq \citep{lund2012},  DESeq and DESeq2 \citep{anders2010, love2014} among many others. These methods use negative binomial generalized linear models to analyze  RNA-seq data and are appropriate for designs providing uncorrelated measurements within each gene. Furthermore, several  methods have been developed for time-course designs, such as NextmaSigPro \citep{nueda2014}, DyNB \citep{aijo2014}, TRAP \citep{jo2014}, SMARTS \citep{wise2015}, and EBSeq-HMM \citep{leng2015}, which were collectively reviewed  by  \citet{spies2015}.  However, these methods do not take within-unit correlation of transcript abundance measurements into account, which may result in many false discoveries or failure to distinguish EE and DE genes. Theoretically, a generalized linear mixed model (GLMM) approach can be used to account for random effects and general correlation structure, but the approach  suffers from convergence issues for many genes because RNA-seq experiments usually have  a small sample size and many zero counts for many genes \citep{cui2016}. Therefore, a new statistical method that is stable numerically under small sample size circumstances and,  at the same time,  controls type I error rate well is desirable. One approach that addresses numerical instability  when analyzing repeated-measures RNA-seq data is to use normal-error linear modeling for log-transformed counts instead of using  discrete probability distributions, such as the negative binomial distribution. 
+
+Recently, \citet{law2014} have  proposed the voom approach to use normal-based methods for analyzing log-transformed RNA-seq data with linear models that explicitly account for heteroscedasticity by the use of precision weights. They showed that correctly capturing the mean-variance relationship in the transformed data is more important than assuming a probability model that acknowledges  the discrete characteristics of the original counts. In particular, by estimating precision weights for  observations of transformed counts and including them into a general linear model framework, \citet{law2014} showed that the log-transformed-based linear model approach performs better than methods based on negative binomial models. Furthermore,  the voom approach facilitates more complex analyses, such as the variance component score test for gene set testing in longitudinal RNA-seq data recently proposed by \cite{angiel2017}. 
+
+In our paper, we will take advantage of the voom approach together with a parametric bootstrap method to detect DE genes with repeated-measures RNA-seq data. For each gene, we model the correlation among observations taken at unequally-spaced time points by a continuous autoregressive correlation structure in a general linear model framework. Parameters are estimated by residual maximum likelihood (REML) using the \texttt{gls} function in the \texttt{nlme} R package \citep{Pinheiro2017R}. We conduct hypothesis testing using a parametric bootstrap method. Simulation studies show the advantages of our method over alternatives that do not account for the correlation among observations within each gene in terms of false discovery rate (FDR) control and the ability to distinguish EE and DE genes. Although, we focus on repeated-measures analysis in this paper, our method can also be easily extended to other complex designs. 
+
+The remainder of the paper is organized as follows. We formally define our proposed method in Section~\ref{RMmethod}, first by revisiting the voom procedure and then specifying the bootstrap strategy for inference. In Section~\ref{RMdataanalysis}, we apply our proposed method as well as several other alternative methods to analyze the repeated-measures RNA-seq dataset that motivates our work. 
+We compare the performance of our method with that of alternative methods by a simulation study in  Section~\ref{RMss}. The paper concludes with a discussion in Section~\ref{RMdiscussion}.
+
+
+\section{Methods}\label{RMmethod}
+\subsection{Notations and Preliminaries}
+Consider the analysis of $m$ genes using RNA-seq read count data from $n$ subjects and $T$ time points. For $g = 1, \dots, m$, $i = 1, \dots, n$, and $t = 1, \dots, T$, let $r_{git}$ be the read count for gene $g$ from subject $i$ at time  $d_t$. Let $\x_{it} = (\x'_{it1}, \dots, \x'_{itk})'$ be a
+vector encoding information on $k$ explanatory variables for subject   $i$  at time  $d_t$. The $k$ explanatory variables may include multilevel factors of primary scientific interest and  other continuous or multilevel categorical covariates. Let $\BX = (\x_{11}, \dots, \x_{1T}, \dots, \x_{n1}, \dots, \x_{nT})'$ and suppose that $\BX$ has full column rank with $\mbox{rank}(\BX) = u$. \citet{law2014} defined the following transformation to obtain the log-counts per million (log-cpm) for each count
+\begin{equation}\label{RMlogcpm}
+y_{git} = \log_2\left( \frac{r_{git} +0.5}{R_{it} +1} \times 10^6\right), \; \y_g = (y_{g11}, \dots, y_{g1T}, \dots, y_{gn1}, \dots, y_{gnT})',
+\end{equation}
+where $R_{it}$ is  a normalization offset computed for subject $i$ at time $d_t$. The normalization offsets account for differences in read counts across the RNA-seq samples. Many normalization procedures have been proposed in the literature (see, e.g., \citet{marioni2008}, \citet{mortazavi2008}, \citet{robinson2010}, \citet{anders2010}, \citet{bullard2010}, \citet{risso2014normalization}, \citet{risso2014role}, and references therein). Throughout this paper, we set $R_{it}$ to be the 0.75 quantile of RNA-seq sample read counts from subject $i$ at time $d_t$ according to the recommendation of \citet{bullard2010}. With this choice for the normalization factor, the $y_{git}$ values are no longer ``counts per million mapped reads" on the log scale, but this interpretation is irrelevant for the differential expression analysis that is the focus of our work.
+
+\subsection{The voom Procedure}
+The voom procedure \citep{law2014} estimates the mean-variance relationship of the log-counts and generates a precision weight for each observation according to the following algorithm:
+\begin{enumerate}
+  \item[1.] For each gene $g$, initially assume the linear model
+  \[
+  y_{git} = \x_{it}^T\vbeta_g + \varepsilon_{git}, \; \varepsilon_{git} \sim \caln(0, \sigma^2_g), \quad g = 1, \dots, m;\; i = 1, \dots, n;\; t = 1, \dots, T .
+  \]
+  \item[2.] Let $\widetilde{\boldsymbol{\beta}}_g = (\BX'\BX)^{-1}\BX'\y_g$ and $\tilde{\sigma}_g = \sqrt{\frac{\left(\y_g - \BX\widetilde{\boldsymbol{\beta}}_g\right)'\left(\y_g - \BX\widetilde{\boldsymbol{\beta}}_g\right)}{nT - u}}$ be the maximum likelihood (ML) and REML estimates  of $\vbeta_g$ and  $\sigma_g$, respectively.
+  \item[3.] Let $\tilde{r}_g = \frac{1}{nT}\sum_{i = 1}^n\sum_{t = 1}^T y_{git} +\frac{1}{nT}\log_2 \left(\prod_{i = 1}^n\prod_{t = 1}^T (R_{it}+1)\right) - \log_2(10^6)$ be the mean log-count value for gene $g$.
+\item[4.] Let $\mbox{lo}(\cdot)$ be the predictor obtained by fitting a LOWESS regression \citep{cleveland1979} of $\tilde{\sigma}_g^{1/2}$ on $\tilde{r}_g$. The voom precision weight for $y_{git}$ is calculated by
+\[
+w_{git} = \left[\mbox{lo}\left( \x_{it}^T\beth_g + \log_2(R_{it}+1) - \log_2(10^6)  \right)\right]^{-4}.
+\]
+\end{enumerate}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Modeling for Repeated Measure RNA-seq Data}\label{RMvoomSec}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+To account for the correlation among observations within  the $g^{th}$ gene, we assume the Gaussian general linear model
+\begin{equation}\label{RMeq1}
+ \y_g = \BX\vbeta_g +\beps_g, \quad  \beps_g \sim \caln(\nul, \sigma^2_g\boldsymbol{V}_g), \quad \boldsymbol{V}_g =    \boldsymbol{W}_g^{-1/2} \boldsymbol{D}_g \boldsymbol{W}_g^{-1/2} ,
+\end{equation}
+where
+\[
+\boldsymbol{W}_g =
+\begin{bmatrix}
+w_{g11} &  0  & \ldots & 0\\
+0  &  w_{g12} & \ldots & 0\\
+\vdots & \vdots & \ddots & \vdots\\
+0  &   0       &\ldots & w_{gnT}
+\end{bmatrix}
+\]
+is the matrix of precision weights
+and
+$\boldsymbol{D}_g$ is an $nT\times nT$  block-diagonal correlation matrix with blocks of the form
+\[
+\BA_g =
+\begin{bmatrix}
+1 &  \rho_g^{|d_2 -d_1|}  & \ldots & \rho_g^{|d_T -d_1|}\\
+ \rho_g^{|d_1 -d_2|}   &  1 & \ldots & \rho_g^{|d_T -d_2|}\\
+\vdots & \vdots & \ddots & \vdots\\
+\rho_g^{|d_1 -d_T|}  &   \rho_g^{|d_2 -d_T|}       &\ldots & 1
+\end{bmatrix},
+\quad 0 \leq \rho_g < 1.
+\]
+This is a continuous autoregressive correlation structure, denoted as $CAR(1)$ \citep{pinheiro2000}, which we will use to model the dependence among within-unit observations. We employ the function \texttt{gls} in the \texttt{nlme} R package \citep{Pinheiro2017R} to fit model \eqref{RMeq1},  resulting in the REML estimators $\widehat{\sigma}^2_g$ and $\widehat{\rho}_g$ of $\sigma_g^2$ and $ \rho_g$, respectively, as well as  the plug-in estimator $\BVgh = \boldsymbol{W}_g^{-1/2} \widehat{\boldsymbol{D}}_g\boldsymbol{W}_g^{-1/2}$ of  $\BVg$ where $\rho_g$  in $\boldsymbol{D}_g$ is substituted by $\widehat{\rho}_g$, and
+$\widehat{\boldsymbol{\beta}}_g = (\BX'\widehat{\boldsymbol{V}}_g^{-1}\BX)^{-1} \BX'\widehat{\boldsymbol{V}}_g^{-1}\y_g$ as an estimator of $\boldsymbol{\beta}_g$.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Shrinkage Estimators of Error Variances}\label{RMshrinkageSec}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+In microarray analysis, \citet{smyth2004}  showed that  using  the shrinkage of the estimated error variances toward  a pooled estimate can stabilize  inference when the number of arrays is small. We follow the same procedure to obtain the shrinkage estimator of the error variance $\sigma^2_g$ for each gene. Particularly, we assume that
+\begin{equation}\label{RMeq2}
+\widehat{\sigma}^2_g | \sigma^2_g \sim \sigma^2_g \frac{\chi^2_{nT-u}}{nT - u}
+\end{equation}
+and, for some parameters $s^2_0$ and $u_0$,
+\[
+\frac{u_0s_0^2}{\sigma_g^2} \sim \chi^2_{u_0},
+\]
+which together with \eqref{RMeq2} implies an inverse-gamma conditional distribution for $\sigma^2_g$ specified by
+\[
+\frac{1}{\sigma^2_g} \Big| \widehat{\sigma}^2_g \sim \mbox{Gamma}\left( \frac{nT - u + u_0}{2}, \frac{(nT - u)\widehat{\sigma}^2_g + u_0 s^2_0}{2(nT - u + u_0)} \right).
+\]
+ A shrinkage  estimator of $\sigma^2_g$ is given by
+\begin{equation}\label{RMeq3}
+s^2_g = \widehat{E}^{-1}(\sigma^{-2}_g|\widehat{\sigma}^2_g)= \frac{(nT - u)\widehat{\sigma}^2_g + \widehat{u}_0 \widehat{s}^2_0}{nT - u + \widehat{u}_0},
+\end{equation}
+where  $\widehat{u}_0$ and  $\widehat{s}_0^2$ are the estimators of the hyperparameters $u_0$ and $s^2_0$ obtained from the theoretical marginal distribution of $\widehat{\sigma}^2_g$ using a method of moments approach \citep{smyth2004}. The shrinkage estimator $s^2_g$ will be used in our inference strategy instead of the unshrunken REML estimator $\widehat{\sigma}_g^2$.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{General Hypothesis Testing of  Regression Coefficients Using Moderated $F$-Statistics} \label{RMgeneraltest}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Suppose for each gene $g$ we are interested in testing  a null hypothesis of the form
+\[
+H_{0g}: \BC\vbeta_g = \boldsymbol{0} \quad \mbox{vs.}\mbox \quad H_{ag}: \BC\vbeta_g \neq \boldsymbol{0},
+\]
+where $\BC$ is an $l\times u$ contrast matrix of rank $\l$. An extension of the  moderated $F$-statistic of   \cite{smyth2004} for gene $g$ is defined as
+\begin{equation}\label{RMeq4}
+K_g = (\BC \beth_g )'(\BC (s_g^2\BX'\widehat{\boldsymbol{V}}_g^{-1}\BX )^{-1}\BC')^{-1}(\BC\beth_g) /l.
+\end{equation}
+
+In general $\BC \beth_g$ is a non-linear function of $\y_g$,  and the exact distribution of $K_g$ is unknown even when model \eqref{RMeq1} holds exactly. Because RNA-seq experiments often have small sample size,  we cannot rely on asymptotic approximations  and instead will approximate the distribution of $K_g$ using a parametric bootstrap approach \citep{efron1993}. 
+For all $g = 1, \dots, m$, carry out the following steps:
+\begin{itemize}
+\item[1.] Simulate  $\beps_g^* \sim \caln(\nul, s^2_g\widehat{\boldsymbol{V}}_g)$ and calculate $\y^*_g = \BX\beth_g + \beps_g^* $.
+\item[2.] Calculate $r_{git}^*$ using $y_{git}^*$ according to \eqref{RMlogcpm}, i.e.,
+\[
+r_{git}^* = \max\{2^{y_{git}^*}\times(R_{it}+1)/10^6-0.5, 0\}.
+\]
+\item[3.] Apply the voom procedure described in Section~\ref{RMvoomSec} and the shrinkage procedure described in Section~\ref{RMshrinkageSec} to  compute $\beth_g^*, s_g^{2*}, \widehat{\rho}_g^*$, and $\widehat{\boldsymbol{V}}_g^*$ from $\{r_{git}^*\}$ and $\BX$
+just as  $\beth_g, s_g^{2}, \widehat{\rho}_g$, and $\BVgh$ were obtained from  $\{r_{git}\}$ and $\BX$.
+\item[4.] Compute
+$
+K_g^* = (\BC \beth_g^* -\BC \beth_g)'(\BC (s_g^{2*}\BX'\widehat{\boldsymbol{V}}_g^{*-1}\BX )^{-1}\BC')^{-1}(\BC\beth_g^* -\BC\beth_g) /l.
+$
+\item[5.] Repeat steps 1 through 4 $B$ times to obtain  null statistics $K_{g1}^*, \dots, K_{gB}^*$.
+ \end{itemize}
+Taking  advantage of the parallel structure in which the same model is fitted for each of many genes, 
+we  combine  the bootstrap null statistics for all genes to calculate a $p$-value for each gene. Numerically, the $p$-value for  gene $g$ is calculated by the proportion of all bootstrap null statistics  $\{K_{g1}^*, \dots, K_{gB}^*: g = 1, \dots, m\}$  that match or exceed the observed statistic $K_{g}$, i.e.,
+\begin{equation}\label{RMeq5}
+p_g = \frac{1}{mB} \sum_{j = 1}^m\sum_{b = 1}^B \mathbbm{1}(K^*_{jb} \geq K_{g}),
+\end{equation}
+where $\mathbbm{1}$ is an indicator function. These $p$-values are converted to $q$-values \citep{storey2002}. To approximately control FDR at any desired level $\alpha$, a null hypothesis is rejected if and only if its $q$-value is less than or equal to $\alpha$. When calculating $q$-values by the method of \cite{storey2002}, we need an estimate of $m_0$, the number of true null hypotheses among all $m$ null hypotheses tested. In this paper, $m_0$ is estimated by the histogram-based method of \cite{nettleton2006}.  Desirable theoretical properties of a closely related histogram-based approach were illustrated by \citet{liang2012}.
+
+The same idea of
+pooling used in \eqref{RMeq5}
+has been used by \citet{storey2005} in a time-course microarray analysis. Even if the test statistics for all genes do not follow the same null distribution, $p$-values computed via pooling can be valid for use in $q$-value estimation \citep{storey2004}. Particularly, \cite{storey2004} showed that a sufficient condition for valid $q$-value estimation is that the collection of $p$-values from tests with a true null hypothesis have an empirical distribution that is stochastically smaller than or equal to a uniform distribution.
+Results from the analysis of simulated data in Section~\ref{RMss} show that our approach to $p$-value calculation satisfies this sufficient condition and thus provides valid $p$-values for the calculation of $q$-values that can be used to control FDR.
+
+\section{Analysis of an LPS RNA-Seq Dataset}\label{RMdataanalysis}
+Lipopolysaccharide (LPS) is extensively used to study acute inflammatory and immune response in humans and animals.  In this section, we  apply our proposed method and three other methods -- DESeq2 \citep{love2014}, voom \citep{law2014}, and  edgeR \citep{Robinson2010a, lun2016} --
+to analyze an RNA-seq dataset  from  a study of the inflammatory response in pigs triggered by LPS at the transcription level \citep[Chapter~2]{liu2017}. The experiment design is described as follows. Four pigs of each residual feed intake line, HRFI and LRFI, were injected %with 30 \textmu g/kg body weight of 
+LPS from \emph{E. coli} 05:B5 bacteria. Blood samples  were collected from eight pigs immediately before the injection (%serving as the baseline, 
+called time point 0 in the following), 2, 6, and 24 hours after the injection. An RNA sample was extracted and sequenced from each blood sample after globin depletion. In total,  there were 4 (pigs) $\times$ 2 (lines) $\times$ 4 (time points) = 32 RNA-seq libraries. Researchers wanted to understand the molecular mechanism of LPS response by identifying genes differentially expressed between lines (Line), across time points (Time),  or through interactions among lines and time points (Line $\times$ Time).
+
+This is an example of a repeated-measures design, where RNA samples were extracted from each pig at four different unequally-spaced time points. The RNA-seq dataset consists of read counts for 11911 genes for each of 32 RNA samples. Following standard practice, this dataset excludes genes with mostly low read counts because such genes contain little information about differential expression. In particular,  the 11911 genes analyzed in this study each have average read counts of at least 8 and no more than 28 zero counts across 32 RNA samples. The same threshold for gene inclusion was used throughout the simulation studies described in Section~\ref{RMss}.
+
+
+A special characteristic of this experiment is the potential for circadian rhythm effects that may induce the correlation between observations taken at the same time of day. Thus, although times 0 and 24 are farthest apart when time is considered to unfold on a linear axis, the correlation between the time 0 and 24 observations may be large because these observations are taken at the same time of day.  To evaluate this possibility, we conducted a preliminary analysis of the LPS RNA-seq dataset by applying the voom procedure and model \eqref{RMeq1} as in Section~\ref{RMvoomSec}, where  $\boldsymbol{D}_g$ is an $nT \times nT$ block-diagonal correlation matrix with blocks of the unstructured form
+
+\[
+\BA_g =
+\begin{bmatrix}
+1 &  \rho_{g, 1}  & \rho_{g,2}  & \rho_{g,3}\\
+\rho_{g, 1}   &  1 & \rho_{g, 4} & \rho_{g,5}\\
+\rho_{g, 2}   & \rho_{g, 4} & 1 & \rho_{g,6}\\
+\rho_{g,3} &\rho_{g,5} &   \rho_{g,6} & 1
+\end{bmatrix},
+\quad 0 \leq \rho_{g,1}, \dots, \rho_{g,6} \leq 1,
+\]
+instead of the $CAR(1)$ form described in Section~\ref{RMvoomSec}. The mean structure of the data is modeled by $\boldsymbol{X}\boldsymbol{\beta}_g $, where the design matrix $\boldsymbol{X}$ is constructed by two factors Time and Line so that there are eight different means, one for each combination of Time and Line.
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.8\textwidth]{figure/SampleCorreltion_AllGenes.pdf}
+ \isucaption{Estimated correlations across all 11911 genes for each pair of time points. The correlation for each gene was estimated by REML using  the function \texttt{gls} in  the \texttt{nlme} R  package applied to the log-transformed LPS RNA-seq data and their precision weights according to the model \eqref{RMeq1}.}
+       \label{RMfigrho}
+\end{figure}
+
+Figure \ref{RMfigrho} shows boxplots of correlations  across all 11911 genes for each pair of time points. Both the average  and median correlations increase across the time pair sequence  (6, 24), (0, 6), (2, 6), (2, 24), (0, 2), (0, 24). This evidence suggests that the circadian rhythm effects on  correlations may be relevant.  In particular, this empirical evidence shows the correlation between time 6 and time 24 observations tends to be  smallest and the correlation between time 0 and time 24 observations tends to be largest. To account for  correlations that are not monotone with time difference on the original time scale,  we propose a remapping procedure of the linear time points to a new time coordinate system so that time 6 and time 24 are farthest apart and other times positioned between them in accordance with the empirical correlation patterns apparent in the data. Without loss of  generality, we consider a mapping of the time points $\{0, 2, 6, 24\}$ to the following new points
+\[
+24 \mapsto d_{24}\equiv 0, \;  6 \mapsto d_6\equiv 1;\; 0 \mapsto d_{0}; \; 2 \mapsto d_{2}, \; 0<d_0,  d_2 < 1.
+\]
+The diagonal block $\BA_g$ now is
+\begin{align}\label{RMAgnew}
+\BA_g & =
+\begin{bmatrix}
+1 &  \rho_g^{|d_0 -d_2|}  & \rho_g^{|d_0 -d_6|} & \rho_g^{|d_0 - d_{24}|}\\
+ \rho_g^{|d_2 -d_0|}   &  1 & \rho_g^{|d_2 -d_6|} & \rho_g^{|d_2 - d_{24}|}\\
+\rho_g^{|d_6 -d_0|} & \rho_g^{|d_6 -d_2|} & 1 & \rho_g^{|d_6 - d_{24}|}\\
+\rho_g^{|d_{24} - d_0|}  &   \rho_g^{|d_{24} - d_2|}   &\rho_g^{|d_{24} - d_6|} & 1
+\end{bmatrix}\\
+ & =
+\begin{bmatrix}
+1 &  \rho_g^{|d_0 -d_2|}  & \rho_g^{1-d_0 } & \rho_g^{d_0}\\
+ \rho_g^{|d_2 -d_0|}   &  1 & \rho_g^{1- d_2} & \rho_g^{d_2}\\
+\rho_g^{1 -d_0} & \rho_g^{1 -d_2} & 1 & \rho_g\\
+\rho_g^{d_0}  &   \rho_g^{d_2}   &\rho_g & 1
+\end{bmatrix},
+\quad 0 \leq \rho_g < 1.
+\end{align}
+To estimate appropriate values for $d_0$ and $d_2$, we consider values best supported by REML log likelihood across all genes.
+Let $\ell_g(\sigma^2_g, \rho_g|\boldsymbol{d}:=(d_0, d_2, 1, 0))$ be the REML log likelihood function for data from gene $g$  according to model \eqref{RMeq1} with $\boldsymbol{A}_g$ as defined in \eqref{RMAgnew}. We choose $d_0$ and  $d_2$ to maximize
+\[
+h(\boldsymbol{d}) = \sum_{g = 1}^m \ell_g(\widehat{\sigma}_g^2, \widehat{\rho}_g|\boldsymbol{d}),
+\]
+where $\widehat{\sigma}_g^2$ and  $\widehat{\rho}_g$ are REML estimates of $\sigma^2_g$ and  $\rho_g$, respectively. Using the function \texttt{constrOptim} in the  \texttt{base} R package, we can easily obtain an approximate maximizer of $h(\boldsymbol{d})$ at
+\[
+\hat{d}_0 = 0.26, \hat{d_2} = 0.52.
+\]
+
+In terms of AIC, AIC of the model \eqref{RMeq1} for our choice of $\boldsymbol{A}_g$ using the new time points is smaller than AIC of that for $\boldsymbol{A}_g = \boldsymbol{I}$, $\boldsymbol{A}_g = Symm$,   $\boldsymbol{A}_g = CompSymm$, $\boldsymbol{A}_g = AR(1)$ with original time points, $\boldsymbol{A}_g = AR(1)$ with new time points and $\boldsymbol{A}_g = CAR(1)$ with original time points on average
+66\%, 72\%, 53\%, 68\%, 54\% and 76\% of the genes, respectively. Even though AIC does not guarantee to lead us to the correct correlation structure \citep{Keselman1998}, it still provides useful evidence for choosing a reasonable correlation structure. In this sense, AIC seems to suggest that our choice of correlation structure is superior than  other common correlation structures.
+
+Now we  apply our proposed method to the LPS RNA-seq data using the new time points instead of the original time points. We also compare our results to those obtained by the popular RNA-seq analysis methods -- voom, DESeq2 and edgeR -- which ignore correlation among observations. Fig. \ref{RMfigkr} summarizes the analysis results of these methods when  FDR is nominally controlled at 5\%. Recall that both DESeq2  and edgeR methods utilize  negative binomial generalized linear models.  DESeq2 uses shrinkage estimation for dispersion parameters and fold changes to improve the stability and interpretability of estimates, while edgeR employs its own version of 
+shrinkage estimation for dispersion parameters and does not shrink log fold change estimates. To conduct inference about the contrasts of interest, we use likelihood ratio test in DESeq2 and the quasi-likelihood $F$-test in edgeR. It is clear from the Venn diagrams  in Figure \ref{RMfigkr} that our proposed method, voomboot, detects the smallest number of DE genes with respect to the Line main effect, and detects the largest number of DE genes for the tests that involve the time factor. The differences between our proposed method and the others can be explained due to the fact that voom, DESeq2 and edgeR tend to  underestimate the covariances between observations measured at different time points, and therefore overestimate the variances of differences between these observations, as well as underestimate the variances of averages of these observations. This  leads us  to the situation that the three methods voom, DESeq2, and edgeR may have an excessive number of large  values of test statistics for the Line main effect, while have  an inadequate number of small values of test statistics that involve the time factor. 
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figure/VennDiagramRFI_Time024.pdf}
+ \isucaption{Venn diagrams showing numbers of DE genes (FDR is nominally controlled at $0.05$) with respect to nine  effects when analyzing the LPS RNA-seq dataset using four methods: voom, edgeR, DESeq2, and voomboot.}
+       \label{RMfigkr}
+\end{figure}
+
+
+
+\section{Simulation Study}\label{RMss}
+
+We considered three simulation scenarios described in detail in Sections \ref{RMss1},  \ref{RMss2},  and \ref{RMss3}. In each scenario, voomboot, voom, egdeR, and DESeq2 are compared in terms of their ability to identify DE genes while controlling FDR. Such comparisons require simulated datasets to contain both EE and DE genes with respect to a contrast of interest.  Within each scenario, we consider four  contrasts: 1) \texttt{Line}: the  main effect of Line factor, 2) \texttt{Time}: the main effect of Time factor, 3) \texttt{Time2-Time0}: the difference between time 2 and time 0, and 4) \texttt{Interaction}: the interaction between line and time factors.
+
+For each scenario and  contrast, we simulated 100 datasets. Each dataset included read counts for 8 pigs at 4 time points and 5000 genes. The read counts were simulated based on \eqref{RMlogcpm} and \eqref{RMeq1} for scenarios described in Sections \ref{RMss1} and \ref{RMss2}. For the third scenario described in Section~\ref{RMss3}, the read counts were simulated from a negative binomial generalized linear mixed-effects model.
+
+
+We want to emphasize that our simulation study considers four contrasts of interest. This is different from most simulation studies where only two-group comparison is considered to evaluate the performance of a differential expression method.  Our simulation setting allows us to fully investigate effects of within-unit correlation on the inference of within-subject and between-subject contrasts. The analysis in Section~\ref{RMdataanalysis} showed that a method ignoring within-unit correlation tends to overestimate the variance of a within-subject contrast and underestimate the variance of a between-subject contrast, which may be inefficient for inference of both within-subject and between-subject contrasts. 
+
+\subsection{Simulation Scenario 1:  Ideal Case, $\rho_g \neq 0$}\label{RMss1}
+The first simulation scenario provides a favorable case for our proposed method in which the read counts were simulated from the working model assumptions \eqref{RMlogcpm} and \eqref{RMeq1}. As true parameter values for simulating new data, for each gene, we used the normalization offsets  $R_{it}$, the  estimates of the precision weight matrix $\boldsymbol{W}_g$, the correlation parameter  $\rho_g$, and the regression coefficients $\boldsymbol{\beta}_g$ from the fit of the model \eqref{RMeq1} to the LPS RNA-seq dataset, except that we set partial regression coefficients corresponding to the contrast of interest to zero for a subset of genes to permit simulation of EE genes with respect to the contrast of interest. More specifically, 5955 least significant partial regression coefficients for the contrast of interest were set to zero. This strategy yielded a parameter set (consisting of the  normalization offsets $R_{it}$, the precision weight matrix $\boldsymbol{W}_g$,  the correlation parameter $\widehat{\rho}_g$, and  regression coefficients $\boldsymbol{\beta}_g$) for each of 5955 EE genes, 11911 - 5955 = 5956 DE genes and a given contrast. To simulate any particular dataset for a given contrast of interest, we randomly sampled 4000 parameter sets from the EE genes and 1000 parameter sets from the DE genes. The selected parameter sets  and the design matrix constructed by the linear combination of  Time, Line, and Line $\times$ Time for 32 samples were used to simulate a 5000 $\times$ 32 dataset of read counts by first simulating log-transformed data using formula \eqref{RMeq1}, then converting the  log-transformed data back to read counts using formula \eqref{RMlogcpm}. Random selection of parameter sets and generation of data was independently repeated 100 times to obtain 100 datasets for each one of the four contrasts of interest: \texttt{Line}, \texttt{Time}, \texttt{Interaction}, \texttt{Time2-Time0}.
+
+\subsection{Simulation Scenario 2: Model Misspecification Case, $\rho_g = 0$ }\label{RMss2}
+The second simulation scenario is designed to evaluate our proposed method when the observations within each gene are independent. This scenario slightly violates our working model assumptions and is less favorable for our method than alternatives such as  voom, edgeR2 and DESeq2 that do not take within-gene correlation into account. In this  scenario, each dataset was simulated using exactly the same procedure described in Section~\ref{RMss1}, except that the within-gene correlation was set to zero instead of using the estimate $\widehat{\rho}_g$ from LPS RNA-seq data.
+
+\subsection{Simulation Scenario 3: Model Misspecification, Negative Binomial Generalized Linear Mixed Effect Model (NB\_GLIMMIX)}\label{RMss3}
+The third simulation scenario is designed to evaluate our proposed method when, contrary to our working model assumptions, read counts were generated from a negative binomial GLMM. First each gene of the LPS RNA-seq data was analyzed using the SAS  GLIMMIX procedure with the negative binomial distribution and a log link function including the linear  combination of Line, Time, and Line $\times$ Time. The offset parameters in the GLIMMIX procedure were set to be $\log(R_{it})$, the log of the upper quartiles of LPS RNA-seq samples. The $\R$-side random effect was set by default as $\R_g = \phi_g \I$, where $\phi_g$ is the negative binomial dispersion parameter. The $\G$-side random effect was chosen as $SP(POW)$ structure with respect to time factor, which is the same as $CAR(1)$ structure in our working model. The pseudo-likelihood technique \citep{wolfinger1993,breslow1993} was employed in estimation.  The estimates of covariance matrix of the fixed-effect parameter  and denominator degrees of freedom for $t$- and $F$-tests were adjusted using Kenward-Roger method \citep{kenward1997}. When analyzing the LPS RNA-seq data using the GLIMMIX procedure, we found that it failed to converge for many genes no matter which estimation  algorithm  was used, for example, algorithms based on linearization,  Laplace approximation, or adaptive quadrature. A possible reason could be due to the small sample size of RNA-seq data with many zero counts. The same numerical instability has been observed in literature, for example, see \citet{cui2016}. Therefore, we did not incorporate negative binomial GLMM in simulation study and in real data analysis. We only used GLIMMIX to obtain parameter sets which in turn were used to simulate data for evaluating our method when the data-generating model is extremely misspecified.  Also, we only used the  GLIMMIX results for the genes that the estimation algorithm converged. In this  scenario, each dataset were generated following the same procedure in Section~\ref{RMss1}, except the parameter sets come from the output of the GLIMMIX procedure applying to the LPS RNA-seq data, and read counts were simulated from a NB GLMM model instead of our model \eqref{RMlogcpm} and \eqref{RMeq1}.
+
+
+\subsection{Simulation Results}
+We analyzed simulated datasets from  three simulation scenarios using  voomboot, voom, edgeR, DESeq2, oracle -- the method that uses true correlation   and unshrunken error variance, and oracle\_shrunken -- the method that uses true correlation  and shrunken error variance. Of course, the two oracle procedures cannot be used in practice, but their inclusion provides a useful reference measure of the performance achieved if the within-gene correlations were known. Due to the numerical instability of GLMM, we do not have oracle and oracle\_shrunken  for the third simulation scenario, therefore, the oracle methods are only available for the first two simulation scenarios when data were generated using our  working model  \eqref{RMlogcpm} and \eqref{RMeq1}.
+
+For all six analysis methods, $p$-value for testing the significance of the partial regression coefficients on the contrast of interest was calculated for each gene. These $p$-values were converted to $q$-values as described in Section~\ref{RMgeneraltest}, and genes with $q$-values no larger than 0.05 were declared to be DE. Using these $p$-values and $q$-values, we evaluated each method's performance based on four criteria: the relationship between empirical distribution of true null $p$-values and the uniform(0,1) distribution,  the incurred FDR when FDR is nominally controlled at 5\%, the number of true positive (NTP)  detections of differential expression, and the partial area under the receiver operating characteristic curve (PAUC) corresponding to false positive rates less than or equal to 0.05. These performance criteria assess the validity of $p$-values, FDR  control, power, and the ability to distinguish EE and DE genes from one another.
+
+All simulation results in terms of the first criterion are displayed in  Figures  \ref{RMfig2}, \ref{RMfig3}, \ref{RMfig4}, \ref{RMfig8}, \ref{RMfig9}, and \ref{RMfig10}. In  simulation scenario 1 when data were generated using our working model with non-zero  correlations,  the empirical quantiles of the null $p$-values of three methods voomboot, oracle, and oracle\_shrunken  are  very similar to the uniform(0,1) quantiles in all four contrasts of interest.  On the other hand, the null $p$-values of voom, edgeR, and DESeq2 are very liberal for  \texttt{Line} main effect,  among the three methods,  DESeq2 results in the most liberal null $p$-values. For the other three contrasts \texttt{Time}, \texttt{Time2-Time0}, and  \texttt{Interaction}, voom and  edgeR give very conservative $p$-values, while DESeq2 gives conservative $p$-values in the cases \texttt{Time2-Time0}, and liberal ones in the case \texttt{Time} and \texttt{Interaction}.
+In  simulation scenario 2 when  data were generated using our working model with zero  correlations, as expected, voom, voomboot, oracle, and oracle\_shrunken  have  the null $p$-values close to  the uniform(0,1) distribution, while the other methods  give  liberal null $p$-values in all four contrasts, but the level of liberty of edgeR and  DESeq2 is not as severe as those in simulation scenario 1. In the simulation scenario 3 when data were generated using a negative binomial GLMM with non-zero correlation incorporating in $\G$-side effect of the SAS procedure GLIMMIX,  the null $p$-values from  all  methods depart from the uniform(0,1) distribution. The null $p$-values of  voomboot are slightly liberal in all contrasts, and closer to the uniform(0,1) distribution than the null $p$-values of the other methods. voom, edgeR, and DESeq2 still give very liberal null $p$-values for \texttt{Line} main effect, and very conservative null $p$-values in the other three contrasts.
+
+The behavior of null $p$-values of all methods can be explained as follows. When within-gene correlations exist, as demonstrated in  simulation scenario 1, the methods  voom, edgeR and DESeq2  do not take within-unit correlation into account, therefore, they tend to underestimate the variances of within-subject contrasts such as  \texttt{Line} main effect, therefore, inflate the corresponding test statistics values,  resulting in  liberal $p$-values. These methods also overestimate the variances of between-subject contrasts such as  \texttt{Time}, \texttt{Time2-Time0}, \texttt{Interaction}, therefore deflate these  test statistics values, resulting in  conservative $p$-values.  In  simulation scenario 2,  the empirical distribution of the null $p$-values of edgeR and DESeq2 slightly deviates  from the uniform(0,1) distribution due to the non-existence of  within-unit correlations among observations of simulated data. But both edgeR and DESeq2  still suffer from model misspecification because they use negative binomial generalized linear model. In  simulation scenario 3,  voomboot faces a severe model misspecification when the simulated data were generated from a negative binomial GLMM. Even though, because voomboot takes within-gene correlation into account, its null $p$-values deviate from the uniform(0,1) distribution less than the other three methods do.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=1.0\textwidth]{figure/Case1_rho_diff_0_Time024_allpvalue.png}
+ \isucaption{A plot of quantiles of null $p$-values versus quantiles of the uniform(0,1) distribution for all methods and contrasts in  simulation scenario 1. Each line represents the quantiles from a single simulation, the diagonal line represents the quantiles of the  uniform(0,1) distribution.}
+       \label{RMfig2}
+\end{figure}
+
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=1.0\textwidth]{figure/Case1_rho_equal_0_Time024_allpvalue.png}
+ \isucaption{A plot of quantiles of null $p$-values versus quantiles of the uniform(0,1) distribution for all methods and contrasts in  simulation scenario 2. Each line represents the quantiles from a single simulation, the diagonal line represents the quantiles of the  uniform(0,1) distribution.}
+       \label{RMfig3}
+\end{figure}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=1.0\textwidth]{figure/Case1_rho_GLIMMIX_Time024_allpvalue.png}
+\isucaption{A plot of quantiles of null $p$-values versus quantiles of the uniform(0,1) distribution for all methods and contrasts in  simulation scenario 3. Each line represents the quantiles from a single simulation, the diagonal line represents the quantiles of the  uniform(0,1) distribution.}
+       \label{RMfig4}
+\end{figure}
+
+
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=1.0\textwidth]{figure/Case1_rho_diff_0_Time024_pvalue10.png}
+ \isucaption{A plot of  the less-than-10\% quantiles of null $p$-values versus the less-than-10\% quantiles of the uniform(0,1) distribution for all methods and contrasts in  simulation scenario 1. Each line represents the less-than-10\% quantiles from a single simulation, the diagonal line represents the the less-than-10\% quantiles of the  uniform(0,1) distribution.}
+       \label{RMfig8}
+\end{figure}
+
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=1.0\textwidth]{figure/Case1_rho_equal_0_Time024_pvalue10.png}
+ \isucaption{A plot of  the less-than-10\% quantiles of null $p$-values versus the less-than-10\% quantiles of the uniform(0,1) distribution for all methods and contrasts in  simulation scenario 2. Each line represents the less-than-10\% quantiles from a single simulation, the diagonal line represents the the less-than-10\% quantiles of the  uniform(0,1) distribution.}
+       \label{RMfig9}
+\end{figure}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=1.0\textwidth]{figure/Case1_rho_GLIMMIX_Time024_pvalue10.png}
+ \isucaption{A plot of  the less-than-10\% quantiles of null $p$-values versus the less-than-10\% quantiles of the uniform(0,1) distribution for all methods and contrasts in  simulation scenario 3. Each line represents the less-than-10\% quantiles from a single simulation, the diagonal line represents the the less-than-10\% quantiles of the  uniform(0,1) distribution.}
+       \label{RMfig10}
+\end{figure}
+
+
+The simulation results in terms of FDR control are summarized in  Figure \ref{RMfig5}. In  simulation scenario 1, voomboot is able to control FDR well for all four contrasts; while voom, edgeR and DESeq2 fail to control FDR for \texttt{Line} main effect with extremely high incurred FDR. For the other three contrasts \texttt{Time, Time2-Time0} and \texttt{Interaction}, both voom and edgeR are able to control FDR conservatively; meanwhile DESeq2 fails to control FDR for all four contrasts except  \texttt{Time2-Time0} effect. In  simulation scenario 2, voomboot and  voom can control FDR; while edgeR and DESeq2 fail to do so. In  simulation scenario 3, most methods fail to control FDR in all cases, except that voom and edgeR  control FDR for the contrasts \texttt{Time, Time2-Time0} and \texttt{Interaction}; DESeq2 controls FDR for the contrasts \texttt{Time} and \texttt{Time2-Time0}. In all simulation scenarios, among the three methods voom, edgeR and  DESeq2,  DESeq2 gives the most liberal incurred FDR.
+
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width = .8\textwidth]{figure/FDR_SimPlot_Time024.png}
+ \isucaption{Boxplots of the incurred FDR when FDR is nominally controlled at 0.05 for all methods and all contrasts in 3 simulation scenarios. Each boxplot has 100 data points representing  100 simulated datasets.}
+       \label{RMfig5}
+\end{figure}
+
+
+The simulation results in terms of PAUC, the ability to distinguish DE and EE genes from one another, are presented in Figure \ref{RMfig6}. For all contrasts, voomboot outperforms all alternatives  except voom in  simulation scenario 2. This is obvious because in  simulation scenario 2, voom is exactly  oracle\_shrunken.  oracle\_shrunken performs best as expected, so does voom. In all simulation scenarios, DESeq2 is the worst method in terms of PAUC among three methods voom, edgeR and DESeq2.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width = .8\textwidth]{figure/PAUC_SimPlot_Time024.png}
+ \isucaption{Boxplots of the  partial area under the receiver operating characteristic curve  (PAUC) when false positive rate is less than or equal to 0.05 for all methods and all  contrasts in 3 simulation scenarios. Each boxplot has 100 data points representing  100 simulated datasets.}
+       \label{RMfig6}
+\end{figure}
+
+The simulation results in terms of power are shown in Figure \ref{RMfig7}. Since many methods  fail to control FDR in many cases, it is hard to evaluate their power in all cases. For the contrast \texttt{Time2-Time0} in the simulation scenario 1 when voomboot, voom, edgeR and  DESeq2 control FDR, it is clear that voomboot is the most powerful method.
+
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width = .8\textwidth]{figure/NTP_SimPlot_Time024.png}
+ \isucaption{Boxplots of number of true positive (NTP) detections  when FDR is nominally controlled at 0.05 for all methods and all  effects in 3 simulation scenarios. Each boxplot has 100 data points representing 100 simulated datasets.}
+       \label{RMfig7}
+\end{figure}
+
+
+\section{Discussion}\label{RMdiscussion}
+
+The proposed method voomboot provides a practical tool for identifying DE genes using RNA-seq data from  repeated-measures designs. The  idea is to use normalized log-counts and their associated precision weights in a general linear model pipeline for estimation,  and then employ a parametric bootstrap procedure for hypothesis testing. Correlation among observations within each gene is accounted for using the continuous autoregressive correlation structure $CAR(1)$.   Under our working model assumptions, simulation studies show the advantages of our method compared to the alternatives  that do not account for the within-gene correlation induced by the repeated-measures structure. In particular, our method outperforms the alternatives that do not consider correlation among observations within gene in terms of FDR control and the ability to distinguish EE  and DE genes from one another. 
+Our method suffers when the model is extremely misspecified, such as when the true data-generating model follows a negative binomial GLMM. Our method is implemented in an R package available at \href{https://github.com/ntyet/tcrmrnaseq}{https://github.com/ntyet/tcrmrnaseq}.
+
+The parametric bootstrap inference approach proposed in our paper can be easily extended to other RNA-seq  designs that may contain factors whose effects are best modeled as random thanks to the simple and straightforward application of linear model using normalized log-counts data. We also expect that the inference approach behaves well in such situations.
+
+Our method is computationally intensive due to its utilization of a parametric bootstrap procedure to make  inference. Our implementation of voomboot method in the \texttt{R} package \texttt{tcrmrnaseq}  use parallelization to speed up the algorithm. Using 16 cores computer in parallel, it takes about 65 minutes to analyze 11911 genes of the LPS RNA-seq dataset. In a personal laptop with 4 cores, it takes about 4 hours and 20 minutes for such analysis.
+
+It is worth to recall that our proposed method is not the only  one that can account for the within-gene correlation among observations in the analysis of RNA-seq data or any other omic-count data. There are several other options that within-gene correlations can be handled.
+
+First, one may use negative binomial or Poisson generalized linear mixed  model, for examples, see \citet{sun2016}, \citet{zhang2017}.  \citet{sun2016}  developed a negative binomial GLMM framework to analyze a time-course RNA-seq experiment at exon level, where they used smoothing spline to model time effect and group effect, and a random effect to model time dependency. However, the random effect does not reflect the general unequally spaced time point situation as shown in our motivating data example.
+On the other hand, \citet{zhang2017} also proposed a negative binomial GLMM for microbiome data to detect significant taxa with respect to a factor of interest accounting for correlation among samples. The sample size in their working dataset is about several hundreds samples, which is not a typical sample size in RNA-seq experiments. Also, from our experience, a regular GLMM fit in RNA-seq context with the autoregressive correlation structure as in our motivating data example has shown to be numerically unstable, because it fails to converge for many genes.
+
+Second, other approach is to use Kenward-Roger's method (KR) for normalized log-counts data in a general linear model framework. However, our extra simulation studies show KR method does not work well in RNA-seq data with the considered modeling assumption in terms of FDR control.
+
+In conclusion, our proposed method works well under the general linear model framework compared to other alternative approaches. Moreover, our approach can be extended to other complex designs that may contain factors whose effects are best modeled as random.  
+
+\section*{ Acknowledgments}
+This material is based upon work supported by Agriculture and Food Research Initiative Competitive Grant No.\ 2011-68004-30336 from the United States Department of Agriculture (USDA) National Institute of Food and Agriculture (NIFA), and by National Institute of General Medical Sciences (NIGMS) of the National Institutes of Health (NIH) and the joint National Science Foundation (NSF)/NIGMS Mathematical Biology Program under award number R01GM109458. The opinions, findings, and conclusions stated herein are those of the authors and do not necessarily reflect those of USDA, NSF, or NIH.
+
+\bibliographystyle{apa}
+\bibliography{../mybib}
